@@ -23,7 +23,7 @@ export default function AdminPage() {
 
   const [printRecord, setPrintRecord] = useState<any>(null);
 
-  const ADMIN_PASSWORD = "kibou";
+  const ADMIN_PASSWORD = "kuwa8899";
 
   const formatTimeDirectly = (dateStr: string, isLongFormat: boolean = false) => {
     if (!dateStr) return "";
