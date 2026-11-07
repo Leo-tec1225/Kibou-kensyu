@@ -1,6 +1,7 @@
 "use client";
 
 import Image from "next/image";
+import Link from "next/link";
 import { useState, useEffect, useRef } from "react";
 import YouTube, { type YouTubeEvent, type YouTubePlayer } from "react-youtube";
 
@@ -187,11 +188,22 @@ export default function TrainingApp() {
           <Image src="/logo.png" alt="Logo" width={1239} height={1323} priority className="h-7 w-auto object-contain" />
           <span className="font-bold text-gray-700 text-xs sm:text-sm tracking-wider border-l border-gray-300 pl-3">研修受講システム</span>
         </div>
-        {userInfo.name && screen !== "login" && (
-          <div className="text-[10px] sm:text-xs text-gray-500 font-medium">
-            受講者: <span className="text-gray-800 font-bold">{userInfo.name}</span> 様
-          </div>
-        )}
+        <div className="flex items-center gap-4">
+          {userInfo.name && screen !== "login" && (
+            <div className="text-[10px] sm:text-xs text-gray-500 font-medium">
+              受講者: <span className="text-gray-800 font-bold">{userInfo.name}</span> 様
+            </div>
+          )}
+          {/* 動画視聴・テスト中は、誤操作防止のため非表示 */}
+          {screen !== "course" && screen !== "test" && (
+            <Link
+              href="/admin"
+              className="text-[10px] sm:text-xs text-gray-500 border border-gray-300 rounded px-2 py-1 hover:bg-gray-50 hover:text-gray-700 transition-colors whitespace-nowrap"
+            >
+              管理者
+            </Link>
+          )}
+        </div>
       </header>
 
       <main className="max-w-3xl mx-auto p-4 sm:p-6 pb-20">
