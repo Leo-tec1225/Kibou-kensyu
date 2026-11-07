@@ -1,7 +1,28 @@
 "use client";
 
-import { useState } from "react";
+import Image from "next/image";
+import { useState, useEffect } from "react";
 import { supabase } from "../../utils/supabase";
+
+type TrainingRecord = {
+  id: string;
+  created_at: string;
+  worker_name: string;
+  worker_type: string;
+  work_date: string;
+  is_passed: boolean;
+};
+
+type AdminQuestion = {
+  id: number;
+  question_num: number;
+  title: string;
+  text: string;
+  is_true: boolean;
+  explanation: string;
+};
+
+type WorkerType = { id: number; name: string };
 
 export default function AdminPage() {
   // ★変更：パスワードだけでなくメールアドレスのステートを追加
@@ -10,21 +31,22 @@ export default function AdminPage() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [activeTab, setActiveTab] = useState<"records" | "questions" | "types">("records");
   
-  const [records, setRecords] = useState<any[]>([]);
-  const [questions, setQuestions] = useState<any[]>([]);
-  const [workerTypes, setWorkerTypes] = useState<any[]>([]);
+  const [records, setRecords] = useState<TrainingRecord[]>([]);
+  const [questions, setQuestions] = useState<AdminQuestion[]>([]);
+  const [workerTypes, setWorkerTypes] = useState<WorkerType[]>([]);
   const [newTypeName, setNewTypeName] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [editingId, setEditingId] = useState<number | null>(null);
-  const [editForm, setEditForm] = useState<any>(null);
-  const [printRecord, setPrintRecord] = useState<any>(null);
+  const [editForm, setEditForm] = useState<AdminQuestion | null>(null);
+  const [printRecord, setPrintRecord] = useState<TrainingRecord | null>(null);
 
+  // DBのタイムスタンプ(UTC)を日本時間で表示する
   const formatTimeDirectly = (dateStr: string, isLongFormat: boolean = false) => {
     if (!dateStr) return "";
-    let cleanStr = dateStr.replace(/\+00.*$/, '').replace('Z', '');
-    cleanStr = cleanStr.replace(' ', 'T');
-    const d = new Date(cleanStr);
+    const d = new Date(dateStr);
+    if (Number.isNaN(d.getTime())) return dateStr;
     return d.toLocaleString("ja-JP", {
+      timeZone: "Asia/Tokyo",
       year: "numeric",
       month: isLongFormat ? "long" : "2-digit",
       day: isLongFormat ? "numeric" : "2-digit",
@@ -105,8 +127,31 @@ export default function AdminPage() {
     }
   };
 
+  // --- ページを開き直してもログイン状態を復元する ---
+  useEffect(() => {
+    let active = true;
+    const load = () => {
+      fetchRecords();
+      fetchQuestions();
+      fetchWorkerTypes();
+    };
+    supabase.auth.getSession().then(({ data }) => {
+      if (active && data.session) {
+        setIsAuthenticated(true);
+        load();
+      }
+    });
+    const { data: sub } = supabase.auth.onAuthStateChange((event) => {
+      if (event === "SIGNED_OUT") setIsAuthenticated(false);
+    });
+    return () => {
+      active = false;
+      sub.subscription.unsubscribe();
+    };
+  }, []);
+
   // --- 問題・区分の編集処理 ---
-  const startEditing = (q: any) => {
+  const startEditing = (q: AdminQuestion) => {
     setEditingId(q.id);
     setEditForm({ ...q });
   };
@@ -117,6 +162,7 @@ export default function AdminPage() {
   };
 
   const saveQuestion = async () => {
+    if (!editForm) return;
     try {
       const { error } = await supabase
         .from("questions")
@@ -172,7 +218,7 @@ export default function AdminPage() {
       <div className="min-h-screen bg-gray-50 flex items-center justify-center p-4 font-sans">
         <div className="bg-white p-8 rounded-md shadow-sm border border-gray-200 w-full max-w-sm animate-fade-in">
           <div className="text-center mb-6">
-            <img src="/logo.png" alt="ロゴ" className="h-12 mx-auto mb-4" />
+            <Image src="/logo.png" alt="ロゴ" width={1239} height={1323} priority className="h-12 mx-auto mb-4" />
             <h1 className="text-sm font-bold text-gray-700 tracking-wider">研修管理システム<br/>ログイン</h1>
           </div>
           <form onSubmit={handleLogin} className="space-y-4">
@@ -217,7 +263,7 @@ export default function AdminPage() {
         {/* ヘッダー */}
         <header className="bg-white border-b border-gray-200 px-5 py-3 flex justify-between items-center shadow-sm sticky top-0 z-40 print:hidden">
           <div className="flex items-center gap-3">
-            <img src="/logo.png" alt="Logo" className="h-7 w-auto object-contain" />
+            <Image src="/logo.png" alt="Logo" width={1239} height={1323} priority className="h-7 w-auto object-contain" />
             <span className="font-bold text-gray-700 text-sm tracking-wider border-l border-gray-300 pl-3">研修管理ダッシュボード</span>
           </div>
           <div className="flex items-center gap-3">
@@ -304,26 +350,26 @@ export default function AdminPage() {
               <h2 className="text-lg font-bold mb-4 text-gray-800 border-l-4 border-[#D11019] pl-2">テスト問題の管理</h2>
               {questions.map((q) => (
                 <div key={q.id} className="bg-white p-5 rounded-md shadow-sm border border-gray-200">
-                  {editingId === q.id ? (
+                  {editingId === q.id && editForm ? (
                     <div className="space-y-4">
                       <div>
                         <label className="block text-xs font-bold text-gray-700 mb-1">問題タイトル</label>
-                        <input type="text" value={editForm.title} onChange={(e) => setEditForm({...editForm, title: e.target.value})} className="w-full p-2.5 border border-gray-300 rounded bg-gray-50 focus:bg-white focus:border-[#D11019] outline-none text-sm text-gray-900" />
+                        <input type="text" value={editForm.title} onChange={(e) => setEditForm((f) => f && { ...f, title: e.target.value })} className="w-full p-2.5 border border-gray-300 rounded bg-gray-50 focus:bg-white focus:border-[#D11019] outline-none text-sm text-gray-900" />
                       </div>
                       <div>
                         <label className="block text-xs font-bold text-gray-700 mb-1">問題文</label>
-                        <textarea value={editForm.text} onChange={(e) => setEditForm({...editForm, text: e.target.value})} className="w-full p-2.5 border border-gray-300 rounded bg-gray-50 focus:bg-white focus:border-[#D11019] outline-none text-sm text-gray-900" rows={2} />
+                        <textarea value={editForm.text} onChange={(e) => setEditForm((f) => f && { ...f, text: e.target.value })} className="w-full p-2.5 border border-gray-300 rounded bg-gray-50 focus:bg-white focus:border-[#D11019] outline-none text-sm text-gray-900" rows={2} />
                       </div>
                       <div>
                         <label className="block text-xs font-bold text-gray-700 mb-1">正解</label>
-                        <select value={editForm.is_true ? "true" : "false"} onChange={(e) => setEditForm({...editForm, is_true: e.target.value === "true"})} className="w-full p-2.5 border border-gray-300 rounded bg-gray-50 focus:bg-white focus:border-[#D11019] outline-none text-sm text-gray-900">
+                        <select value={editForm.is_true ? "true" : "false"} onChange={(e) => setEditForm((f) => f && { ...f, is_true: e.target.value === "true" })} className="w-full p-2.5 border border-gray-300 rounded bg-gray-50 focus:bg-white focus:border-[#D11019] outline-none text-sm text-gray-900">
                           <option value="true">A．正しい</option>
                           <option value="false">B．誤り</option>
                         </select>
                       </div>
                       <div>
                         <label className="block text-xs font-bold text-gray-700 mb-1">解説文</label>
-                        <textarea value={editForm.explanation} onChange={(e) => setEditForm({...editForm, explanation: e.target.value})} className="w-full p-2.5 border border-gray-300 rounded bg-gray-50 focus:bg-white focus:border-[#D11019] outline-none text-sm text-gray-900" rows={3} />
+                        <textarea value={editForm.explanation} onChange={(e) => setEditForm((f) => f && { ...f, explanation: e.target.value })} className="w-full p-2.5 border border-gray-300 rounded bg-gray-50 focus:bg-white focus:border-[#D11019] outline-none text-sm text-gray-900" rows={3} />
                       </div>
                       <div className="flex space-x-2 pt-3">
                         <button onClick={saveQuestion} className="bg-[#D11019] text-white px-5 py-2 rounded text-sm font-bold hover:bg-[#b00d15] shadow-sm">保存する</button>
@@ -392,7 +438,7 @@ export default function AdminPage() {
             </div>
             <div className="p-10 sm:p-12 print:p-8 bg-white text-gray-900">
               <div className="text-center mb-10">
-                <img src="/logo.png" alt="本郷希望の丘ロゴ" className="h-16 mx-auto mb-4" />
+                <Image src="/logo.png" alt="本郷希望の丘ロゴ" width={1239} height={1323} priority className="h-16 mx-auto mb-4" />
                 <h1 className="text-2xl font-bold tracking-widest border-b-2 border-gray-800 pb-3 mb-2 inline-block">スポット職員 研修受講サマリー</h1>
                 <p className="text-gray-600 text-sm mt-2">特別養護老人ホーム 本郷希望の丘</p>
               </div>

@@ -1,36 +1,50 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# 研修受講システム（kibou-kensyu）
 
-## Getting Started
+動画視聴と確認テストを行う研修用 Web アプリです（Next.js + Supabase）。
 
-First, run the development server:
+- `/` 受講者画面（ログイン → 動画視聴 → 確認テスト → 修了）
+- `/admin` 管理画面（受講履歴、問題の編集、勤務区分の管理）
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+## 環境変数（`.env.local` / 本番の環境変数に設定）
+
+| 名前 | 用途 |
+|---|---|
+| `NEXT_PUBLIC_SUPABASE_URL` | Supabase のプロジェクト URL |
+| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | 管理画面のログインで使用（公開されても可） |
+| `SUPABASE_SERVICE_ROLE_KEY` | サーバー側 API 用。**秘密。`NEXT_PUBLIC_` を付けない** |
+
+## 構成
+
+受講者画面は Supabase を直接呼ばず、サーバー側の API を経由します。
+
+- `GET /api/questions` 問題一覧（正解・解説は含まない）
+- `POST /api/questions/check` 1問ごとの正誤判定（不正解時のみ解説を返す）
+- `POST /api/submit` 全問をサーバーで再採点し、全問正解のときだけ修了記録を保存
+- `GET /api/worker-types` ログイン画面の勤務区分
+
+## Supabase の設定
+
+テーブル: `questions`、`training_records`、`worker_types`。
+3テーブルとも RLS を有効にし、`authenticated`（管理者）だけに全操作を許可します。
+**`anon` 向けのポリシーは作らない**でください（受講者のデータが公開されます）。
+
+```sql
+alter table questions enable row level security;
+alter table training_records enable row level security;
+alter table worker_types enable row level security;
+
+create policy "admin all" on questions for all to authenticated using (true) with check (true);
+create policy "admin all" on training_records for all to authenticated using (true) with check (true);
+create policy "admin all" on worker_types for all to authenticated using (true) with check (true);
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+管理者は Supabase の Authentication → Users で作成します。
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## 開発
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
-
-## Learn More
-
-To learn more about Next.js, take a look at the following resources:
-
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+```bash
+npm install
+npm run dev     # http://localhost:3000
+npm run build
+npm run lint
+```

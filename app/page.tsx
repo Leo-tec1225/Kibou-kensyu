@@ -1,8 +1,8 @@
 "use client";
 
+import Image from "next/image";
 import { useState, useEffect, useRef } from "react";
-import { supabase } from "../utils/supabase";
-import YouTube from "react-youtube";
+import YouTube, { type YouTubeEvent, type YouTubePlayer } from "react-youtube";
 
 // ▼ TypeScriptの型定義
 type Question = {
@@ -10,8 +10,6 @@ type Question = {
   question_num: number;
   title: string;
   text: string;
-  is_true: boolean;
-  explanation: string;
 };
 
 export default function TrainingApp() {
@@ -28,27 +26,58 @@ export default function TrainingApp() {
   const [currentQIndex, setCurrentQIndex] = useState(0);
   const [showExplanation, setShowExplanation] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [explanation, setExplanation] = useState("");
+  const [loadError, setLoadError] = useState(false);
+  const answersRef = useRef<Record<number, boolean>>({});
 
   // ★ 追加：終了ボタンを押したかどうかのステート
   const [isFinished, setIsFinished] = useState(false);
 
   // --- YouTubeスキップ防止 ---
-  const playerRef = useRef<any>(null);
+  const playerRef = useRef<YouTubePlayer | null>(null);
   const maxTimeRef = useRef(0);
-  const intervalRef = useRef<any>(null);
+  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  const stopWatching = () => {
+    if (intervalRef.current) {
+      clearInterval(intervalRef.current);
+      intervalRef.current = null;
+    }
+  };
+
+  // 画面を離れるときにタイマーを止める
+  useEffect(() => stopWatching, []);
+
+  // 勤務区分（管理画面で編集した内容）を取得
+  const [workerTypes, setWorkerTypes] = useState<string[]>(["カイテク", "派遣", "その他"]);
+  useEffect(() => {
+    (async () => {
+      try {
+        const res = await fetch("/api/worker-types");
+        if (!res.ok) throw new Error(`status ${res.status}`);
+        const data: { id: number; name: string }[] = await res.json();
+        if (data.length > 0) {
+          const names = data.map((t) => t.name);
+          setWorkerTypes(names);
+          setUserInfo((prev) => (names.includes(prev.type) ? prev : { ...prev, type: names[0] }));
+        }
+      } catch (error) {
+        console.error("勤務区分の取得に失敗しました（初期値を使用）:", error);
+      }
+    })();
+  }, []);
 
   // 初回読み込み（Supabaseから問題取得）
   useEffect(() => {
     const fetchQuestions = async () => {
       try {
-        const { data, error } = await supabase
-          .from("questions")
-          .select("*")
-          .order("question_num", { ascending: true });
-        if (error) throw error;
-        if (data) setQuestions(data);
+        const res = await fetch("/api/questions");
+        if (!res.ok) throw new Error(`status ${res.status}`);
+        const data: Question[] = await res.json();
+        setQuestions(data);
       } catch (error) {
         console.error("問題の取得に失敗しました:", error);
+        setLoadError(true);
       } finally {
         setIsLoading(false);
       }
@@ -64,34 +93,30 @@ export default function TrainingApp() {
     if (userInfo.name && userInfo.date) setScreen("dashboard");
   };
 
-  const handleAnswer = (answer: boolean) => {
-    if (answer === currentQ.is_true) {
-      setShowExplanation(false);
-      if (currentQIndex < questions.length - 1) {
-        setCurrentQIndex(currentQIndex + 1);
-      } else {
-        submitResult();
-      }
-    } else {
-      setShowExplanation(true);
-    }
-  };
-
-  const submitResult = async () => {
+  const handleAnswer = async (answer: boolean) => {
+    if (isSubmitting) return;
     setIsSubmitting(true);
     try {
-      const { error } = await supabase.from("training_records").insert([
-        {
-          worker_name: userInfo.name,
-          worker_type: userInfo.type,
-          work_date: userInfo.date,
-          score: questions.length,
-          is_passed: true,
-        },
-      ]);
-      if (error) throw error;
-      setIsCoursePassed(true);
-      setScreen("completed");
+      const res = await fetch("/api/questions/check", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: currentQ.id, answer }),
+      });
+      if (!res.ok) throw new Error(`status ${res.status}`);
+      const result: { correct: boolean; explanation?: string } = await res.json();
+      if (result.correct) {
+        answersRef.current[currentQ.id] = answer;
+        setShowExplanation(false);
+        setExplanation("");
+        if (currentQIndex < questions.length - 1) {
+          setCurrentQIndex(currentQIndex + 1);
+        } else {
+          await submitResult();
+        }
+      } else {
+        setExplanation(result.explanation ?? "");
+        setShowExplanation(true);
+      }
     } catch (error) {
       alert("通信エラーが発生しました。");
       console.error(error);
@@ -100,27 +125,51 @@ export default function TrainingApp() {
     }
   };
 
+  const submitResult = async () => {
+    const res = await fetch("/api/submit", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: userInfo.name,
+        type: userInfo.type,
+        date: userInfo.date,
+        answers: answersRef.current,
+      }),
+    });
+    if (!res.ok) throw new Error(`status ${res.status}`);
+    setIsCoursePassed(true);
+    setScreen("completed");
+  };
+
   // --- YouTube プレイヤーの監視制御 ---
-  const onReady = (event: any) => { playerRef.current = event.target; };
-  const onStateChange = (event: any) => {
+  const onReady = (event: YouTubeEvent) => { playerRef.current = event.target; };
+  const onStateChange = (event: YouTubeEvent) => {
+    stopWatching(); // 二重にタイマーが走らないよう、必ず先に止める
     if (event.data === 1) {
+      const player = playerRef.current;
+      if (!player) return;
+      // 一時停止中にシークして再生を再開した場合も、未視聴位置なら戻す
+      if (player.getCurrentTime() > maxTimeRef.current + 1.5) {
+        player.seekTo(maxTimeRef.current, true);
+      }
       intervalRef.current = setInterval(() => {
-        if (!playerRef.current) return;
-        const currentTime = playerRef.current.getCurrentTime();
+        const currentTime = player.getCurrentTime();
         if (currentTime > maxTimeRef.current + 1.5) {
-          playerRef.current.seekTo(maxTimeRef.current, true);
+          player.seekTo(maxTimeRef.current, true);
         } else {
-          maxTimeRef.current = currentTime;
+          maxTimeRef.current = Math.max(maxTimeRef.current, currentTime);
         }
       }, 1000);
-    } else {
-      if (intervalRef.current) clearInterval(intervalRef.current);
     }
   };
   const onEnd = () => {
-    if (intervalRef.current) clearInterval(intervalRef.current);
+    stopWatching();
     setIsVideoWatched(true);
   };
+
+  if (loadError) {
+    return <div className="min-h-screen flex items-center justify-center bg-gray-50 text-red-600 text-sm">問題の読み込みに失敗しました。時間をおいて再読み込みしてください。</div>;
+  }
 
   if (isLoading) {
     return <div className="min-h-screen flex items-center justify-center bg-gray-50 text-gray-500 text-sm">システムを準備中...</div>;
@@ -135,7 +184,7 @@ export default function TrainingApp() {
       {/* 共通ヘッダー（LMS風） */}
       <header className="bg-white border-b border-gray-200 px-5 py-3 flex justify-between items-center shadow-sm sticky top-0 z-40">
         <div className="flex items-center gap-3">
-          <img src="/logo.png" alt="Logo" className="h-7 w-auto object-contain" />
+          <Image src="/logo.png" alt="Logo" width={1239} height={1323} priority className="h-7 w-auto object-contain" />
           <span className="font-bold text-gray-700 text-xs sm:text-sm tracking-wider border-l border-gray-300 pl-3">研修受講システム</span>
         </div>
         {userInfo.name && screen !== "login" && (
@@ -170,9 +219,9 @@ export default function TrainingApp() {
                   value={userInfo.type} onChange={(e) => setUserInfo({ ...userInfo, type: e.target.value })}
                   className="w-full bg-gray-50 border border-gray-300 p-3 rounded focus:bg-white focus:border-[#D11019] focus:ring-1 focus:ring-[#D11019] outline-none transition-all text-sm"
                 >
-                  <option value="カイテク">カイテク</option>
-                  <option value="派遣">派遣</option>
-                  <option value="その他">その他</option>
+                  {workerTypes.map((name) => (
+                    <option key={name} value={name}>{name}</option>
+                  ))}
                 </select>
               </div>
               <div>
@@ -212,6 +261,7 @@ export default function TrainingApp() {
                 <div className="flex flex-col sm:flex-row gap-5 border border-gray-200 p-4 rounded-md hover:border-[#D11019] transition-colors bg-gray-50">
                   {/* サムネイル */}
                   <div className="w-full sm:w-48 h-28 bg-gray-200 rounded flex items-center justify-center shrink-0 border border-gray-300 relative overflow-hidden">
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
                     <img src={`https://img.youtube.com/vi/SY7y5YL-BH0/mqdefault.jpg`} alt="サムネイル" className="w-full h-full object-cover opacity-80" />
                     <div className="absolute inset-0 bg-black/20 flex items-center justify-center">
                       <svg className="w-10 h-10 text-white opacity-80" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM9.555 7.168A1 1 0 008 8v4a1 1 0 001.555.832l3-2a1 1 0 000-1.664l-3-2z" clipRule="evenodd"></path></svg>
@@ -259,7 +309,7 @@ export default function TrainingApp() {
             <div className="mb-4 text-xs text-gray-500 flex items-center">
               <button onClick={() => setScreen("dashboard")} className="hover:text-[#D11019] hover:underline">マイページ</button>
               <span className="mx-2">&gt;</span>
-              <span className="text-gray-800 font-bold">職員 初回研修コース</span>
+              <span className="text-gray-800 font-bold">桑の実会 初回研修コース</span>
             </div>
 
             <div className="bg-white shadow-sm border border-gray-200 rounded-lg overflow-hidden">
@@ -330,7 +380,7 @@ export default function TrainingApp() {
                 {showExplanation && (
                   <div className="bg-red-50 border border-red-200 p-4 rounded mb-6">
                     <p className="text-[#D11019] font-bold mb-2 flex items-center text-sm"><span className="text-lg mr-2">✕</span> 誤りです</p>
-                    <p className="text-gray-700 text-sm leading-relaxed">{currentQ.explanation}</p>
+                    <p className="text-gray-700 text-sm leading-relaxed">{explanation}</p>
                   </div>
                 )}
 
