@@ -1,0 +1,16 @@
+{
+  "id": "/",
+  "name": "研修受講システム",
+  "short_name": "研修受講",
+  "description": "桑の実会 初回研修の受講・確認テスト",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "lang": "ja",
+  "background_color": "#ffffff",
+  "theme_color": "#D11019",
+  "icons": [
+    { "src": "/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable" },
+    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ]
+}

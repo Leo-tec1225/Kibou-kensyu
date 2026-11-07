@@ -15,6 +15,9 @@ const geistMono = Geist_Mono({
 export const metadata: Metadata = {
   title: "研修受講システム",
   description: "桑の実会 初回研修の受講・確認テスト",
+  manifest: "/manifest.webmanifest",
+  icons: { apple: "/apple-touch-icon.png" },
+  appleWebApp: { capable: true, title: "研修受講" },
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
